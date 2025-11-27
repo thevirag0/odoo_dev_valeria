@@ -6,7 +6,7 @@ echo "    INICIANDO RESTAURACIÓN CON VOLUMEN NOMBRADO"
 echo "======================================================="
 
 PKG_PATH="data/backups/odoo_data_package.tar.gz"
-VOLUME_NAME="odoo_dev_dam_postgres_data_volume" 
+VOLUME_NAME="odoo_dev_valeria_postgres_data_volume" 
 TEMP_DB_DIR="data/dataPostgreSQL" # Usamos la carpeta del Bind Mount como temporal
 TEMP_ODOO_FIL=/tmp/odoo_filestore_temp # Usamos un temporal seguro para Odoo
 

@@ -7,7 +7,7 @@ echo "======================================================="
 
 PKG_PATH="data/backups/odoo_data_package.tar.gz"
 TEMP_DB_DIR="data/temp_postgres_dump"
-VOLUME_NAME="odoo_dev_dam_postgres_data_volume" # Nombre del volumen de Docker
+VOLUME_NAME="odoo_dev_valeria_postgres_data_volume" # Nombre del volumen de Docker
 
 # 1. Detener los servicios para garantizar la integridad de los datos
 echo "-> Deteniendo contenedores..."
