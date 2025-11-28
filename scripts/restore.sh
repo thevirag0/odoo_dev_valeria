@@ -1,55 +1,67 @@
+
 #!/bin/bash
-# Script final para restaurar datos directamente a un Volumen Nombrado de Docker.
+# Restauración segura de la BD Odoo desde un dump SQL plano
+# Compatible con docker compose v2 y docker-compose v1
+
+set -euo pipefail
+
+# Detectar comando docker compose
+DC="docker compose"
+
+PG_CONTAINER="postgres_dev_dam"
+ODOO_CONTAINER="odoo_dev_dam"
+DB_NAME="odoo"
+PG_USER="odoo"
+BACKUP_SQL="./data/backups/odoo.sql"
 
 echo "======================================================="
-echo "    INICIANDO RESTAURACIÓN CON VOLUMEN NOMBRADO"
+echo " INICIANDO RESTAURACIÓN SEGURA"
 echo "======================================================="
 
-PKG_PATH="data/backups/odoo_data_package.tar.gz"
-VOLUME_NAME="odoo_dev_dam_postgres_data_volume" 
-TEMP_DB_DIR="data/dataPostgreSQL" # Usamos la carpeta del Bind Mount como temporal
-TEMP_ODOO_FIL=/tmp/odoo_filestore_temp # Usamos un temporal seguro para Odoo
-
-# 1. Verificar si el paquete de datos existe
-if [ ! -f $PKG_PATH ]; then
-    echo "ERROR: No se encontró el archivo de datos '$PKG_PATH'. Asegúrate de haber hecho 'git pull'."
-    exit 1
+# 1. Comprobar que existe el backup
+if [[ ! -f "${BACKUP_SQL}" ]]; then
+  echo "ERROR: No se encontró el archivo ${BACKUP_SQL}"
+  exit 1
 fi
 
-# 2. Limpieza de volúmenes antiguos y directorios
-echo "-> Eliminando volumen de PostgreSQL y carpetas locales antiguas..."
-docker-compose down -v 
-docker volume rm $VOLUME_NAME 2>/dev/null || true # Elimina el volumen nombrado para una restauración limpia
-rm -rf $TEMP_DB_DIR data/odoo/filestore data/odoo/sessions 
-mkdir -p $TEMP_DB_DIR # Recrea el directorio temporal
+# 2. Parar Odoo
+echo "==> Parando Odoo..."
+${DC} stop "${ODOO_CONTAINER}"
 
-# 3. Desempaquetar los datos de PostgreSQL y Odoo en carpetas temporales
-echo "-> Desempaquetando datos de PostgreSQL en $TEMP_DB_DIR..."
-# Extrae solo el contenido de la base de datos a la carpeta temporal.
-tar -xzvf $PKG_PATH -C $TEMP_DB_DIR --strip-components=1 data/dataPostgreSQL
+# 3. Arrancar Postgres si no está activo
+if ! docker ps --format '{{.Names}}' | grep -q "^${PG_CONTAINER}$"; then
+  echo "==> Arrancando Postgres..."
+  ${DC} up -d "${PG_CONTAINER}"
+fi
 
-# Extrae el filestore y sessions directamente a las carpetas Bind Mount (creará las carpetas)
-echo "-> Restaurando filestore y sessions (Bind Mounts)..."
-tar -xzvf $PKG_PATH 
+# 4. Esperar a que Postgres esté listo
+echo "==> Esperando a que Postgres esté disponible..."
+until docker exec "${PG_CONTAINER}" pg_isready -U "${PG_USER}" >/dev/null 2>&1; do
+  echo "   -> Postgres aún arrancando, reintentando en 2s..."
+  sleep 2
+done
+echo "✅ Postgres está listo."
 
-# 4. Inyección de Datos en el Volumen Nombrado de PostgreSQL
-# Copia los datos desde el directorio temporal del host al volumen gestionado por Docker
-echo "-> Copiando datos de PostgreSQL (temp) al Volumen Nombrado..."
-docker run --rm \
-    -v $(pwd)/$TEMP_DB_DIR:/from_host \
-    -v $VOLUME_NAME:/to_volume \
-    postgres:15 \
-    sh -c "cp -a /from_host/. /to_volume/ && chown -R postgres:postgres /to_volume/"
+# 5. Eliminar BD si existe y recrear vacía
+echo "==> Eliminando BD '${DB_NAME}' si existe..."
+docker exec "${PG_CONTAINER}" bash -lc "dropdb -U '${PG_USER}' --if-exists '${DB_NAME}'"
 
-# 5. Limpieza del directorio temporal del host
-echo "-> Limpiando directorio temporal..."
-rm -rf $TEMP_DB_DIR
+echo "==> Creando BD '${DB_NAME}'..."
+docker exec "${PG_CONTAINER}" bash -lc "createdb -U '${PG_USER}' '${DB_NAME}'"
 
-# 6. Levantar los servicios de Docker
-echo "-> Iniciando Docker Compose..."
-docker-compose up -d
+# 6. Restaurar desde el SQL plano
+echo "==> Restaurando datos desde ${BACKUP_SQL}..."
+docker exec -i "${PG_CONTAINER}" psql -U "${PG_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=on < "${BACKUP_SQL}"
+
+echo "✅ Restauración SQL completada en BD '${DB_NAME}'."
+
+# 7. Intentar reiniciar Odoo
+echo "==> Arrancando Odoo..."
+if ! ${DC} start "${ODOO_CONTAINER}" 2>/dev/null; then
+  echo "   -> start falló; recreando contenedores..."
+  ${DC} up -d "${PG_CONTAINER}" "${ODOO_CONTAINER}"
+fi
 
 echo "======================================================="
-echo " ¡RESTAURACIÓN COMPLETA! Se ha corregido la lógica de inyección de datos."
-echo " Acceso a Odoo en: http://localhost:8069"
+echo " ✅ RESTAURACIÓN COMPLETA. Accede a: http://localhost:8069"
 echo "======================================================="

@@ -4,57 +4,42 @@
 echo "======================================================="
 echo "    PASO 1: INICIANDO COPIA DE SEGURIDAD LOCAL"
 echo "======================================================="
+set -euo pipefail
 
-PKG_PATH="data/backups/odoo_data_package.tar.gz"
-TEMP_DB_DIR="data/temp_postgres_dump"
-VOLUME_NAME="odoo_dev_dam_postgres_data_volume" # Nombre del volumen de Docker
+# Nombres según tu último docker-compose.yml
+PG_CONTAINER="postgres_dev_dam"
+ODOO_CONTAINER="odoo_dev_dam"
+DB_NAME="odoo"
+PG_USER="odoo"
+BACKUP_SQL="data/backups/odoo.sql"
 
-# 1. Detener los servicios para garantizar la integridad de los datos
-echo "-> Deteniendo contenedores..."
-docker-compose stop
+echo "==> Parando Odoo para garantizar consistencia..."
+docker-compose stop "$ODOO_CONTAINER"
 
-# 2. Preparación de directorios
-rm -f $PKG_PATH
-rm -rf $TEMP_DB_DIR
-mkdir -p $TEMP_DB_DIR
+# Comprobar que el contenedor de Postgres está up
+if ! docker ps --format '{{.Names}}' | grep -q "^${PG_CONTAINER}$"; then
+  echo "==> Arrancando Postgres..."
+  docker-compose up -d "$PG_CONTAINER"
+fi
 
-# 3. EXTRAER DATOS DEL VOLUMEN NOMBRADO
-echo "-> Copiando datos de PostgreSQL desde el Volumen Nombrado a directorio temporal..."
-docker run --rm \
-    -v $VOLUME_NAME:/from_volume \
-    -v $(pwd)/$TEMP_DB_DIR:/to_host \
-    postgres:15 \
-    sh -c "cp -a /from_volume/. /to_host/"
 
-# 4. Empaquetar: DB (temporal), Filestore y Sessions (Bind Mounts)
-echo "-> Empaquetando datos (Named Volume + Bind Mounts) en $PKG_PATH..."
-tar -czvf $PKG_PATH \
-    $TEMP_DB_DIR \
-    data/odoo/filestore \
-    data/odoo/sessions \
-    --transform 's|data/temp_postgres_dump|data/dataPostgreSQL|'
+echo "==> Creando backup lógico (SQL plano) de la BD '${DB_NAME}'..."
+# El dump se genera dentro del contenedor y se escribe en el bind mount /backups => ./data/backups del host
+docker exec "$PG_CONTAINER" bash -lc "pg_dump -U '$PG_USER' -d '$DB_NAME' > /backups/odoo.sql"
 
-# 5. Limpiar directorios temporales
-echo "-> Limpiando directorio temporal..."
-rm -rf $TEMP_DB_DIR
+# Opcional: sincronizar permisos en el host (por si el archivo queda con UID/GID del contenedor)
+chmod 600 "$BACKUP_SQL" || true
 
-# 6. Iniciar los contenedores inmediatamente para continuar el trabajo
-echo "-> Iniciando contenedores de nuevo para continuar el trabajo..."
-docker-compose start
+echo "Backup completado: $BACKUP_SQL"
 
-echo "✅ Copia de seguridad local completada y entorno reiniciado."
-echo "falta subit a GitHub..."
+echo "==> Arrancando Odoo de nuevo..."
+docker-compose start "$ODOO_CONTAINER"
 
 exit
 
-
-echo "======================================================="
-echo "    PASO 2: SUBIENDO CAMBIOS A GITHUB"
-echo "======================================================="
-
 # 7. Añadir archivos al staging
 echo "-> Añadiendo el nuevo paquete de datos y código a Git..."
-git add $PKG_PATH .
+sudo git add .
 
 # 8. Realizar el commit
 FECHA_BACKUP=$(date +"%Y-%m-%d %H:%M:%S")
@@ -63,9 +48,8 @@ git commit -m "BACKUP AUTOMÁTICO - Datos (Volumen Nombrado) y código actualiza
 
 # 9. Subir a GitHub
 echo "-> Subiendo a GitHub (rama main)..."
-exit
 
-git push origin main
+git push 
 
 if [ $? -eq 0 ]; then
     echo "======================================================="
