@@ -1,0 +1,26 @@
+# ----------------------------------------------------------------
+# IGNORAR TODOS LOS DATOS PERSISTENTES (¡MUY IMPORTANTE!)
+# ----------------------------------------------------------------
+
+# Ignorar los datos de la base de datos PostgreSQL
+/data/dataPostgreSQL/
+
+# Ignorar el filestore de Odoo (adjuntos, imágenes, etc.)
+/data/odoo/filestore/
+
+# Ignorar las sesiones de Odoo
+/data/odoo/sessions/
+
+# ----------------------------------------------------------------
+# Archivos de sistema y Python
+# ----------------------------------------------------------------
+
+# Ignorar archivos compilados de Python
+__pycache__/
+*.pyc
+
+# Ignorar archivos de sistema operativo
+.DS_Store
+
+# Ignorar carpetas de IDEs (opcional pero recomendado)
+.vscode/
